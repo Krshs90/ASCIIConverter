@@ -174,7 +174,7 @@ class AsciiApp(QMainWindow):
         settings_layout.addWidget(self.btn_reset)
         settings_group.setLayout(settings_layout)
         left_panel.addWidget(settings_group)
-        self.btn_export = QPushButton("Export Video to MP4")
+        self.btn_export = QPushButton("Export Video (MP4/MOV)")
         self.btn_export.clicked.connect(self.export_video)
         left_panel.addWidget(self.btn_export)
         left_panel.addStretch()
