@@ -366,7 +366,7 @@ class AsciiApp(QMainWindow):
         if not self.media_handler.is_video:
             QMessageBox.information(self, "Info", "Load a video first to export.")
             return
-        save_path, _ = QFileDialog.getSaveFileName(self, "Save Video", "", "MP4 Video (*.mp4)")
+        save_path, _ = QFileDialog.getSaveFileName(self, "Save Video", "", "Video Files (*.mp4 *.mov);;MP4 Video (*.mp4);;QuickTime Movie (*.mov)")
         if not save_path:
             return
         self.stop_video()
@@ -380,7 +380,11 @@ class AsciiApp(QMainWindow):
         h, w, ch = frame.shape
         fps = self.media_handler.fps
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        temp_video_path = os.path.join(tempfile.gettempdir(), "ascii_temp_export.mp4")
+        ext = os.path.splitext(save_path)[1].lower()
+        if not ext:
+            ext = ".mp4"
+            save_path += ext
+        temp_video_path = os.path.join(tempfile.gettempdir(), f"ascii_temp_export{ext}")
         out = cv2.VideoWriter(temp_video_path, fourcc, fps, (w, h))
         self.media_handler.reset()
         total = self.media_handler.total_frames
