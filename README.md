@@ -1,4 +1,4 @@
-# ASCII Art Converter V2
+# ASCII Art Converter
 
 ![Python](https://img.shields.io/badge/Python-3.13-blue?style=for-the-badge&logo=python&logoColor=white)
 ![PyQt6](https://img.shields.io/badge/PyQt6-GUI-green?style=for-the-badge&logo=qt&logoColor=white)
@@ -12,7 +12,7 @@ A high-performance Windows desktop application that transforms photos and videos
 ## Video Demo
 
 > **Watch the application in action:**  
-> *[Insert Link, GIF, or embedded video of your demonstration here!]*
+> *Coming soon!*
 
 ---
 
