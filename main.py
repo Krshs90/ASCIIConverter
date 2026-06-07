@@ -9,7 +9,7 @@ from moviepy import VideoFileClip, AudioFileClip
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QLabel, QLineEdit, 
                              QComboBox, QSpinBox, QFileDialog, QGroupBox, QColorDialog,
-                             QMessageBox, QSlider, QStyle, QCheckBox)
+                             QMessageBox, QSlider, QStyle, QCheckBox, QDoubleSpinBox)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QImage, QPixmap, QPainter
 import qdarktheme
@@ -60,6 +60,16 @@ class VideoProcessingThread(QThread):
                 self.media_handler.set_frame_position(self.seek_request)
                 self.seek_request = None
             if not self.is_paused:
+                if self.media_handler.has_audio and pygame.mixer.get_init() and pygame.mixer.music.get_busy():
+                    audio_pos_ms = pygame.mixer.music.get_pos()
+                    if audio_pos_ms >= 0:
+                        target_frame_idx = int((audio_pos_ms / 1000.0) * self.media_handler.fps)
+                        if self.media_handler.current_frame_idx < target_frame_idx - 2:
+                            ret, frame = self.media_handler.get_next_frame()
+                            if ret:
+                                self.progress_signal.emit(self.media_handler.current_frame_idx)
+                            continue
+                            
                 ret, frame = self.media_handler.get_next_frame()
                 if ret:
                     ascii_bgr = self.ascii_engine.convert_frame_to_image(frame)
@@ -95,7 +105,7 @@ class VideoProcessingThread(QThread):
 class AsciiApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("ASCII Art Converter V2")
+        self.setWindowTitle("ASCII Art Converter V1.3")
         self.resize(1100, 800)
         self.ascii_engine = AsciiEngine()
         self.media_handler = MediaHandler()
@@ -123,6 +133,9 @@ class AsciiApp(QMainWindow):
         yt_layout.addWidget(self.txt_yt_url)
         yt_layout.addWidget(self.btn_load_yt)
         load_layout.addLayout(yt_layout)
+        self.btn_clear_media = QPushButton("Clear Media")
+        self.btn_clear_media.clicked.connect(self.clear_media)
+        load_layout.addWidget(self.btn_clear_media)
         load_group.setLayout(load_layout)
         left_panel.addWidget(load_group)
         settings_group = QGroupBox("Appearance Settings")
@@ -143,26 +156,50 @@ class AsciiApp(QMainWindow):
         settings_layout.addWidget(self.btn_custom_color)
         detail_layout = QHBoxLayout()
         detail_layout.addWidget(QLabel("Detail Level:"))
-        self.lbl_detail_val = QLabel("100")
+        
+        self.spin_detail = QSpinBox()
+        self.spin_detail.setRange(20, 500)
+        self.spin_detail.setValue(100)
+        self.spin_detail.setKeyboardTracking(False)
+        self.spin_detail.valueChanged.connect(self.change_detail)
+        
         detail_layout.addStretch()
-        detail_layout.addWidget(self.lbl_detail_val)
+        detail_layout.addWidget(self.spin_detail)
         settings_layout.addLayout(detail_layout)
+        
         self.slider_detail = QSlider(Qt.Orientation.Horizontal)
-        self.slider_detail.setRange(20, 300)
+        self.slider_detail.setRange(20, 500)
         self.slider_detail.setValue(100)
-        self.slider_detail.valueChanged.connect(self.change_detail)
+        self.slider_detail.valueChanged.connect(self.spin_detail.setValue)
+        self.spin_detail.valueChanged.connect(self.slider_detail.setValue)
         settings_layout.addWidget(self.slider_detail)
+        
         bright_layout = QHBoxLayout()
         bright_layout.addWidget(QLabel("Brightness Boost:"))
-        self.lbl_bright_val = QLabel("1.0x")
+        
+        self.spin_bright = QDoubleSpinBox()
+        self.spin_bright.setRange(1.0, 5.0)
+        self.spin_bright.setSingleStep(0.1)
+        self.spin_bright.setValue(1.0)
+        self.spin_bright.setKeyboardTracking(False)
+        self.spin_bright.valueChanged.connect(self.change_brightness)
+        
         bright_layout.addStretch()
-        bright_layout.addWidget(self.lbl_bright_val)
+        bright_layout.addWidget(self.spin_bright)
         settings_layout.addLayout(bright_layout)
+        
         self.slider_bright = QSlider(Qt.Orientation.Horizontal)
         self.slider_bright.setRange(10, 50) 
         self.slider_bright.setValue(10)
-        self.slider_bright.valueChanged.connect(self.change_brightness)
+        self.slider_bright.valueChanged.connect(lambda v: self.spin_bright.setValue(v / 10.0))
+        self.spin_bright.valueChanged.connect(lambda v: self.slider_bright.setValue(int(v * 10)))
         settings_layout.addWidget(self.slider_bright)
+        
+        self.cb_true_color = QCheckBox("True Color Compensation (Experimental)")
+        self.cb_true_color.setToolTip("Boosts the color intensity to mathematically counteract the darkness of the ASCII gaps, preserving original brightness and exact colors.")
+        self.cb_true_color.stateChanged.connect(self.toggle_true_color)
+        settings_layout.addWidget(self.cb_true_color)
+        
         settings_layout.addWidget(QLabel("Font Size:"))
         self.sb_font = QSpinBox()
         self.sb_font.setRange(6, 36)
@@ -174,9 +211,20 @@ class AsciiApp(QMainWindow):
         settings_layout.addWidget(self.btn_reset)
         settings_group.setLayout(settings_layout)
         left_panel.addWidget(settings_group)
+        
+        export_group = QGroupBox("Export")
+        export_layout = QVBoxLayout()
+        export_layout.addWidget(QLabel("Compression:"))
+        self.cb_compress = QComboBox()
+        self.cb_compress.addItems(["No Compression", "Discord/Slack (<20MB)"])
+        export_layout.addWidget(self.cb_compress)
+        
         self.btn_export = QPushButton("Export Video (MP4/MOV)")
         self.btn_export.clicked.connect(self.export_video)
-        left_panel.addWidget(self.btn_export)
+        export_layout.addWidget(self.btn_export)
+        export_group.setLayout(export_layout)
+        left_panel.addWidget(export_group)
+        
         left_panel.addStretch()
         right_panel = QVBoxLayout()
         self.video_display = VideoDisplay()
@@ -242,13 +290,34 @@ class AsciiApp(QMainWindow):
             self.slider_progress.setEnabled(False)
             self.lbl_time.setText("--:-- / --:--")
         self.play_video()
+    def clear_media(self):
+        self.stop_video()
+        self.media_handler.release()
+        self.video_display.set_text("Load media to begin.")
+        self.slider_progress.setEnabled(False)
+        self.lbl_time.setText("00:00 / 00:00")
+        
     def reset_settings(self):
         self.cb_charset.setCurrentText("Standard")
         self.cb_colormode.setCurrentText("Original")
-        self.slider_detail.setValue(100)
-        self.slider_bright.setValue(10)
+        self.spin_detail.setValue(100)
+        self.spin_bright.setValue(1.0)
         self.cb_loop.setChecked(False)
         self.sb_font.setValue(12)
+        self.cb_true_color.setChecked(False)
+        
+    def toggle_true_color(self, state):
+        is_on = (state == 2)
+        self.ascii_engine.true_color_compensation = is_on
+        if is_on:
+            if self.spin_detail.value() < 300:
+                self.spin_detail.setValue(300)
+            self.spin_detail.setEnabled(False)
+            self.slider_detail.setEnabled(False)
+        else:
+            self.spin_detail.setEnabled(True)
+            self.slider_detail.setEnabled(True)
+            
     def toggle_mute(self, state):
         if state == 2: 
             pygame.mixer.music.set_volume(0.0)
@@ -264,12 +333,13 @@ class AsciiApp(QMainWindow):
         if color.isValid():
             self.ascii_engine.custom_color = (color.red(), color.green(), color.blue())
     def change_detail(self, val):
-        self.lbl_detail_val.setText(str(val))
         self.ascii_engine.output_width = val
+        if val > 300 and not getattr(self, '_warned_detail', False):
+            self._warned_detail = True
+            QMessageBox.warning(self, "High Detail Warning", "Details above 300 may cause the application to lag, use excessive memory, or crash! Proceed with caution.")
+            
     def change_brightness(self, val):
-        mult = val / 10.0
-        self.lbl_bright_val.setText(f"{mult:.1f}x")
-        self.ascii_engine.brightness_boost = mult
+        self.ascii_engine.brightness_boost = val
     def change_font_size(self, val):
         self.ascii_engine.set_font_size(val)
     def toggle_play(self):
@@ -316,6 +386,10 @@ class AsciiApp(QMainWindow):
             self.video_thread = None
         self.btn_play.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
         pygame.mixer.music.stop()
+        try:
+            pygame.mixer.music.unload()
+        except Exception:
+            pass
         self.slider_progress.setValue(0)
         self.update_time_label(0)
     def scrub_start(self):
@@ -401,14 +475,22 @@ class AsciiApp(QMainWindow):
                 self.video_display.set_text(f"Exporting... {i}/{total} frames")
                 QApplication.processEvents()
         out.release()
+        compress_mode = self.cb_compress.currentText()
+        
         if self.media_handler.has_audio and not self.cb_mute.isChecked():
             self.video_display.set_text("Muxing audio... please wait.")
             QApplication.processEvents()
             try:
                 video_clip = VideoFileClip(temp_video_path)
                 audio_clip = AudioFileClip(self.media_handler.audio_path)
-                final_clip = video_clip.set_audio(audio_clip)
-                final_clip.write_videofile(save_path, codec="libx264", audio_codec="aac", logger=None)
+                final_clip = video_clip.with_audio(audio_clip)
+                if compress_mode == "Discord/Slack (<20MB)":
+                    duration = video_clip.duration if video_clip.duration else (self.media_handler.total_frames / fps)
+                    target_size_bits = 19 * 1024 * 1024 * 8
+                    video_bitrate = max(100000, (target_size_bits / duration) - 128000)
+                    final_clip.write_videofile(save_path, codec="libx264", audio_codec="aac", bitrate=f"{int(video_bitrate)}", preset="medium", logger=None)
+                else:
+                    final_clip.write_videofile(save_path, codec="libx264", audio_codec="aac", logger=None)
                 video_clip.close()
                 audio_clip.close()
                 final_clip.close()
@@ -418,9 +500,25 @@ class AsciiApp(QMainWindow):
                 import shutil
                 shutil.copy(temp_video_path, save_path)
         else:
-            import shutil
-            shutil.copy(temp_video_path, save_path)
-            os.remove(temp_video_path)
+            if compress_mode == "Discord/Slack (<20MB)":
+                self.video_display.set_text("Compressing video... please wait.")
+                QApplication.processEvents()
+                try:
+                    video_clip = VideoFileClip(temp_video_path)
+                    duration = video_clip.duration if video_clip.duration else (self.media_handler.total_frames / fps)
+                    target_size_bits = 19 * 1024 * 1024 * 8
+                    video_bitrate = max(100000, (target_size_bits / duration))
+                    video_clip.write_videofile(save_path, codec="libx264", bitrate=f"{int(video_bitrate)}", preset="medium", logger=None)
+                    video_clip.close()
+                    os.remove(temp_video_path)
+                except Exception as e:
+                    print(f"Error compressing: {e}")
+                    import shutil
+                    shutil.copy(temp_video_path, save_path)
+            else:
+                import shutil
+                shutil.copy(temp_video_path, save_path)
+                os.remove(temp_video_path)
         self.media_handler.reset()
         self.video_display.set_text("Export complete!")
         QMessageBox.information(self, "Success", "Video exported successfully!")
