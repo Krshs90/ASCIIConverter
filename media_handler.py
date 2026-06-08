@@ -14,7 +14,7 @@ class MediaHandler:
         self.has_audio = False
         self.audio_path = None
         self.source_path = None
-    def load_media(self, path_or_url, is_youtube=False):
+    def load_media(self, path_or_url, is_youtube=False, progress_callback=None):
         self.release()
         self.source_path = path_or_url
         source = path_or_url
@@ -33,14 +33,56 @@ class MediaHandler:
                 return True
                 
         if is_youtube:
-            ydl_opts = {
-                'format': 'best[ext=mp4]', 
-                'quiet': True,
-                'no_warnings': True
-            }
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info_dict = ydl.extract_info(path_or_url, download=False)
-                source = info_dict.get('url', path_or_url)
+            # Strip tracking parameters which can sometimes confuse the extractor
+            if '?si=' in path_or_url:
+                path_or_url = path_or_url.split('?si=')[0]
+                
+            uid = uuid.uuid4().hex[:8]
+            video_out = os.path.join(tempfile.gettempdir(), f"ascii_temp_video_{uid}.mp4")
+            
+            def yt_progress_hook(d):
+                if d['status'] == 'downloading':
+                    p = d.get('_percent_str', '0.0%')
+                    if progress_callback:
+                        progress_callback(f"Downloading Video... {p.strip()}")
+                        
+            retry_strategies = [
+                {'format': 'best[ext=mp4]/best', 'extractor_args': {'youtube': {'player_client': ['web', 'default']}}},
+                {'format': 'best[ext=mp4]/best', 'extractor_args': {'youtube': {'player_client': ['android']}}},
+                {'format': 'best[ext=mp4]/best', 'extractor_args': {'youtube': {'player_client': ['tv']}}},
+                {'format': 'best[ext=mp4]/best'}
+            ]
+            
+            success = False
+            last_error = None
+            self.successful_youtube_strategy = None
+            
+            for strategy in retry_strategies:
+                ydl_opts = {
+                    'format': strategy['format'], 
+                    'outtmpl': video_out,
+                    'quiet': True,
+                    'no_warnings': True,
+                    'progress_hooks': [yt_progress_hook]
+                }
+                if 'extractor_args' in strategy:
+                    ydl_opts['extractor_args'] = strategy['extractor_args']
+                    
+                try:
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        ydl.download([path_or_url])
+                        if os.path.exists(video_out):
+                            source = video_out
+                            self.source_path = source
+                            success = True
+                            self.successful_youtube_strategy = strategy
+                            break
+                except Exception as e:
+                    last_error = e
+                    continue
+                    
+            if not success:
+                raise Exception(f"YouTube is blocking the extraction. We tried multiple methods but YouTube's anti-bot protection blocked all of them. This is not a bug on our end, try again later or use a different video. (Sometimes restarting the application helps reset the connection.)\n\nLast error: {last_error}")
         self.cap = cv2.VideoCapture(source)
         if not self.cap.isOpened():
             return False
@@ -52,46 +94,22 @@ class MediaHandler:
                 self.single_image = frame
         else:
             self.is_video = True
-            import imageio_ffmpeg
-            ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
             
             uid = uuid.uuid4().hex[:8]
             self.audio_path = os.path.join(tempfile.gettempdir(), f"ascii_temp_audio_{uid}.wav")
+            
+            if progress_callback:
+                progress_callback("Extracting audio... please wait.")
                 
-            if is_youtube:
-                ydl_audio_opts = {
-                    'format': 'bestaudio/best',
-                    'outtmpl': os.path.join(tempfile.gettempdir(), f'ascii_temp_audio_raw_{uid}.%(ext)s'),
-                    'postprocessors': [{
-                        'key': 'FFmpegExtractAudio',
-                        'preferredcodec': 'wav',
-                    }],
-                    'ffmpeg_location': ffmpeg_path,
-                    'quiet': True,
-                    'no_warnings': True
-                }
-                try:
-                    with yt_dlp.YoutubeDL(ydl_audio_opts) as ydl:
-                        ydl.download([path_or_url])
-                    actual_wav = os.path.join(tempfile.gettempdir(), f'ascii_temp_audio_raw_{uid}.wav')
-                    if os.path.exists(actual_wav):
-                        os.replace(actual_wav, self.audio_path)
-                        self.has_audio = True
-                    else:
-                        self.has_audio = False
-                except Exception as e:
-                    print(f"Youtube audio extraction failed: {e}")
-                    self.has_audio = False
-            else:
-                try:
-                    clip = VideoFileClip(self.source_path)
-                    if clip.audio is not None:
-                        clip.audio.write_audiofile(self.audio_path, logger=None)
-                        self.has_audio = True
-                    clip.close()
-                except Exception as e:
-                    print(f"Audio extraction failed or no audio: {e}")
-                    self.has_audio = False
+            try:
+                clip = VideoFileClip(source)
+                if clip.audio is not None:
+                    clip.audio.write_audiofile(self.audio_path, logger=None)
+                    self.has_audio = True
+                clip.close()
+            except Exception as e:
+                print(f"Audio extraction failed or no audio: {e}")
+                self.has_audio = False
         self.fps = self.cap.get(cv2.CAP_PROP_FPS)
         if self.fps <= 0 or math.isnan(self.fps):
             self.fps = 30 
@@ -134,3 +152,9 @@ class MediaHandler:
             except:
                 pass
         self.audio_path = None
+        
+        if getattr(self, 'source_path', None) and isinstance(self.source_path, str) and 'ascii_temp_video_' in self.source_path and os.path.exists(self.source_path):
+            try:
+                os.remove(self.source_path)
+            except:
+                pass

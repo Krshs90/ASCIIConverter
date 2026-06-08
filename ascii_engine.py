@@ -62,10 +62,19 @@ class AsciiEngine:
     def convert_frame_to_image(self, frame_bgr):
         if frame_bgr is None:
             return None
+            
+        # Capture an atomic reference to the tiles array to prevent race conditions 
+        # when the font size is changed by the GUI thread mid-render.
+        char_tiles = self.char_tiles
+        if char_tiles is None:
+            return frame_bgr
+            
+        actual_char_height, actual_char_width = char_tiles.shape[1], char_tiles.shape[2]
+        
         height, width, _ = frame_bgr.shape
         ratio = height / width
         new_width = self.output_width
-        font_ratio = self.char_height / self.char_width
+        font_ratio = actual_char_height / actual_char_width
         new_height = int(new_width * ratio / font_ratio)
         if new_width <= 0 or new_height <= 0:
             return frame_bgr
@@ -83,9 +92,11 @@ class AsciiEngine:
         if self.brightness_boost != 1.0:
             gray_img = np.clip(gray_img.astype(np.float32) * self.brightness_boost, 0, 255).astype(np.uint8)
             resized_img = np.clip(resized_img.astype(np.float32) * self.brightness_boost, 0, 255).astype(np.uint8)
-        char_len = len(self.char_tiles)
+            
+        char_len = len(char_tiles)
         char_indices = np.clip(np.int32((gray_img / 255.0) * char_len), 0, char_len - 1)
-        mapped_tiles = self.char_tiles[char_indices]
+        mapped_tiles = char_tiles[char_indices]
+        
         if self.color_mode == "Original":
             colors = resized_img 
         elif self.color_mode == "Grayscale":
@@ -98,5 +109,5 @@ class AsciiEngine:
         colored_tiles = mapped_tiles[..., np.newaxis] * colors[:, :, np.newaxis, np.newaxis, :]
         colored_tiles = colored_tiles.astype(np.uint8)
         stitched = colored_tiles.transpose(0, 2, 1, 3, 4)
-        out_frame_bgr = stitched.reshape(new_height * self.char_height, new_width * self.char_width, 3)
+        out_frame_bgr = stitched.reshape(new_height * actual_char_height, new_width * actual_char_width, 3)
         return out_frame_bgr

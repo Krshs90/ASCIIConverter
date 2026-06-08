@@ -12,7 +12,7 @@ A high-performance Windows desktop application that transforms photos and videos
 ## Video Demo
 
 > **Watch the application in action:**  
-> *Coming soon!*
+> *Link Coming Soon*
 
 ---
 

@@ -52,23 +52,34 @@ class VideoProcessingThread(QThread):
         self.is_looping = False
         self.latest_frame = None
         self.seek_request = None
+        self.playback_start_time = 0
+        self.playback_start_frame = 0
+        
     def run(self):
         target_delay = 1.0 / self.media_handler.fps if self.media_handler.fps > 0 else 0.033
+        self.playback_start_time = time.time()
+        self.playback_start_frame = self.media_handler.current_frame_idx
+        
         while self._run_flag:
-            start_time = time.time()
+            loop_start = time.time()
+            
             if self.seek_request is not None:
                 self.media_handler.set_frame_position(self.seek_request)
+                self.playback_start_time = loop_start
+                self.playback_start_frame = self.seek_request
                 self.seek_request = None
+                
             if not self.is_paused:
-                if self.media_handler.has_audio and pygame.mixer.get_init() and pygame.mixer.music.get_busy():
-                    audio_pos_ms = pygame.mixer.music.get_pos()
-                    if audio_pos_ms >= 0:
-                        target_frame_idx = int((audio_pos_ms / 1000.0) * self.media_handler.fps)
-                        if self.media_handler.current_frame_idx < target_frame_idx - 2:
-                            ret, frame = self.media_handler.get_next_frame()
-                            if ret:
-                                self.progress_signal.emit(self.media_handler.current_frame_idx)
-                            continue
+                if self.media_handler.is_video:
+                    elapsed = time.time() - self.playback_start_time
+                    target_frame_idx = self.playback_start_frame + int(elapsed * self.media_handler.fps)
+                    
+                    if self.media_handler.current_frame_idx < target_frame_idx - 1:
+                        # We are behind, skip frames to catch up
+                        ret, frame = self.media_handler.get_next_frame()
+                        if ret:
+                            self.progress_signal.emit(self.media_handler.current_frame_idx)
+                        continue
                             
                 ret, frame = self.media_handler.get_next_frame()
                 if ret:
@@ -81,27 +92,54 @@ class VideoProcessingThread(QThread):
                         self.latest_frame = qt_format.copy()
                         self.frame_ready_signal.emit()
                     self.progress_signal.emit(self.media_handler.current_frame_idx)
+                    
                     if not self.media_handler.is_video:
                         self._run_flag = False
                         break
-                    elapsed = time.time() - start_time
-                    sleep_time = target_delay - elapsed
+                        
+                    # Calculate sleep time properly
+                    now = time.time()
+                    expected_time_for_next_frame = self.playback_start_time + ((self.media_handler.current_frame_idx - self.playback_start_frame) / self.media_handler.fps)
+                    sleep_time = expected_time_for_next_frame - now
+                    
                     if sleep_time > 0:
                         self.msleep(int(sleep_time * 1000))
                     else:
-                        self.msleep(1) 
+                        self.msleep(1)
                 else:
                     if self.is_looping and self.media_handler.is_video:
                         self.media_handler.reset()
+                        self.playback_start_time = time.time()
+                        self.playback_start_frame = 0
                         continue
                     self.playback_finished_signal.emit()
                     self._run_flag = False
                     break
             else:
                 self.msleep(50)
+                # Advance playback start time while paused so we don't fast-forward upon resume
+                self.playback_start_time += (time.time() - loop_start)
     def stop(self):
         self._run_flag = False
         self.wait()
+
+class YoutubeFetchThread(QThread):
+    finished_signal = pyqtSignal(bool, str)
+    progress_signal = pyqtSignal(str)
+    
+    def __init__(self, media_handler, url):
+        super().__init__()
+        self.media_handler = media_handler
+        self.url = url
+        
+    def run(self):
+        try:
+            if self.media_handler.load_media(self.url, is_youtube=True, progress_callback=self.progress_signal.emit):
+                self.finished_signal.emit(True, "")
+            else:
+                self.finished_signal.emit(False, "Could not fetch YouTube stream.")
+        except Exception as e:
+            self.finished_signal.emit(False, str(e))
 class AsciiApp(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -271,17 +309,31 @@ class AsciiApp(QMainWindow):
     def load_youtube(self):
         url = self.txt_yt_url.text().strip()
         if url:
+            import urllib.parse
+            parsed = urllib.parse.urlparse(url)
+            if not (parsed.scheme in ['http', 'https'] and ('youtube.com' in parsed.netloc or 'youtu.be' in parsed.netloc)):
+                QMessageBox.warning(self, "Invalid URL", "Please enter a valid YouTube URL (e.g. https://youtube.com/... or https://youtu.be/...).")
+                return
+                
             self.stop_video()
+            self.btn_load_yt.setEnabled(False)
+            self.txt_yt_url.setEnabled(False)
             self.video_display.set_text("Fetching YouTube stream... please wait.")
-            QApplication.processEvents()
-            try:
-                if self.media_handler.load_media(url, is_youtube=True):
-                    self.setup_playback()
-                else:
-                    QMessageBox.critical(self, "Error", "Could not fetch YouTube stream.")
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to load YouTube video: {e}")
-                self.video_display.set_text("Load media to begin.")
+            
+            self.yt_fetch_thread = YoutubeFetchThread(self.media_handler, url)
+            self.yt_fetch_thread.progress_signal.connect(self.video_display.set_text)
+            self.yt_fetch_thread.finished_signal.connect(self.on_youtube_fetched)
+            self.yt_fetch_thread.start()
+            
+    def on_youtube_fetched(self, success, error_msg):
+        self.btn_load_yt.setEnabled(True)
+        self.txt_yt_url.setEnabled(True)
+        
+        if success:
+            self.setup_playback()
+        else:
+            QMessageBox.critical(self, "Error", f"Failed to load YouTube video:\n\n{error_msg}")
+            self.video_display.set_text("Load media to begin.")
     def setup_playback(self):
         if self.media_handler.is_video:
             self.slider_progress.setEnabled(True)
