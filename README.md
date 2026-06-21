@@ -12,7 +12,7 @@ A high-performance Windows desktop application that transforms photos and videos
 ## Video Demo
 
 > **Watch the application in action:**  
-> *Link Coming Soon*
+> [*YouTube Video*](https://youtu.be/tBjQ3NsnQYQ)
 
 ---
 
@@ -20,7 +20,7 @@ A high-performance Windows desktop application that transforms photos and videos
 
 1. **Clone the repository:**
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/Krshs90/ASCIIConverter.git
    cd ASCIIConverter
    ```
 
