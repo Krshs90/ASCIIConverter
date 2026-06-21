@@ -18,7 +18,6 @@ class MediaHandler:
         self.release()
         self.source_path = path_or_url
         source = path_or_url
-        
         import uuid
         ext = os.path.splitext(path_or_url)[1].lower()
         if not is_youtube and ext in ['.png', '.jpg', '.jpeg', '.bmp', '.webp']:
@@ -31,35 +30,28 @@ class MediaHandler:
                 self.current_frame_idx = 0
                 self.has_audio = False
                 return True
-                
         if is_youtube:
-            # Strip tracking parameters which can sometimes confuse the extractor
             if '?si=' in path_or_url:
                 path_or_url = path_or_url.split('?si=')[0]
-                
             uid = uuid.uuid4().hex[:8]
             video_out = os.path.join(tempfile.gettempdir(), f"ascii_temp_video_{uid}.mp4")
-            
             def yt_progress_hook(d):
                 if d['status'] == 'downloading':
                     p = d.get('_percent_str', '0.0%')
                     if progress_callback:
                         progress_callback(f"Downloading Video... {p.strip()}")
-                        
             retry_strategies = [
                 {'format': 'best[ext=mp4]/best', 'extractor_args': {'youtube': {'player_client': ['web', 'default']}}},
                 {'format': 'best[ext=mp4]/best', 'extractor_args': {'youtube': {'player_client': ['android']}}},
                 {'format': 'best[ext=mp4]/best', 'extractor_args': {'youtube': {'player_client': ['tv']}}},
                 {'format': 'best[ext=mp4]/best'}
             ]
-            
             success = False
             last_error = None
             self.successful_youtube_strategy = None
-            
             for strategy in retry_strategies:
                 ydl_opts = {
-                    'format': strategy['format'], 
+                    'format': strategy['format'],
                     'outtmpl': video_out,
                     'quiet': True,
                     'no_warnings': True,
@@ -67,7 +59,6 @@ class MediaHandler:
                 }
                 if 'extractor_args' in strategy:
                     ydl_opts['extractor_args'] = strategy['extractor_args']
-                    
                 try:
                     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                         ydl.download([path_or_url])
@@ -80,7 +71,6 @@ class MediaHandler:
                 except Exception as e:
                     last_error = e
                     continue
-                    
             if not success:
                 raise Exception(f"YouTube is blocking the extraction. We tried multiple methods but YouTube's anti-bot protection blocked all of them. This is not a bug on our end, try again later or use a different video. (Sometimes restarting the application helps reset the connection.)\n\nLast error: {last_error}")
         self.cap = cv2.VideoCapture(source)
@@ -94,13 +84,10 @@ class MediaHandler:
                 self.single_image = frame
         else:
             self.is_video = True
-            
             uid = uuid.uuid4().hex[:8]
             self.audio_path = os.path.join(tempfile.gettempdir(), f"ascii_temp_audio_{uid}.wav")
-            
             if progress_callback:
                 progress_callback("Extracting audio... please wait.")
-                
             try:
                 clip = VideoFileClip(source)
                 if clip.audio is not None:
@@ -112,10 +99,9 @@ class MediaHandler:
                 self.has_audio = False
         self.fps = self.cap.get(cv2.CAP_PROP_FPS)
         if self.fps <= 0 or math.isnan(self.fps):
-            self.fps = 30 
+            self.fps = 30
         self.current_frame_idx = 0
         return True
-
     def get_next_frame(self):
         if not self.is_video and hasattr(self, 'single_image'):
             return True, self.single_image.copy()
@@ -125,12 +111,10 @@ class MediaHandler:
         if ret:
             self.current_frame_idx += 1
         return ret, frame
-
     def get_frame_position(self):
         if self.cap is not None and self.is_video:
             return int(self.cap.get(cv2.CAP_PROP_POS_FRAMES))
         return 0
-
     def set_frame_position(self, frame_idx):
         if self.cap is not None and self.is_video:
             if 0 <= frame_idx < self.total_frames:
@@ -152,7 +136,6 @@ class MediaHandler:
             except:
                 pass
         self.audio_path = None
-        
         if getattr(self, 'source_path', None) and isinstance(self.source_path, str) and 'ascii_temp_video_' in self.source_path and os.path.exists(self.source_path):
             try:
                 os.remove(self.source_path)
