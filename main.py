@@ -143,7 +143,7 @@ class YoutubeFetchThread(QThread):
 class AsciiApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("ASCII Art Converter V1.3")
+        self.setWindowTitle("ASCII Art Converter V1.4.1")
         self.resize(1100, 800)
         self.ascii_engine = AsciiEngine()
         self.media_handler = MediaHandler()
